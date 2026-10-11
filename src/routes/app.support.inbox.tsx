@@ -8,7 +8,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Message, SessionStatusBadge } from "@/components/grazu/assistant";
-import { assistantActions, availabilityOptions, closedNotice, demoCs, type CsAvailability, demoParticipant, formatTime, priorities, sessionStatus, useAssistant, type Conversation, type ConversationPriority } from "@/lib/assistant";
+import { assistantActions, conversationEvents, lifecycleLabels, availabilityOptions, closedNotice, demoCs, type CsAvailability, demoParticipant, formatTime, priorities, sessionStatus, useAssistant, type Conversation, type ConversationPriority } from "@/lib/assistant";
 import { findings, useRepos } from "@/lib/devsecops";
 import { useUseCases } from "@/lib/use-cases";
 import { pageHead } from "@/lib/grazu-navigation";
@@ -167,6 +167,7 @@ function SupportInbox() {
                   {selected.status === "AI_ACTIVE" && <Button size="sm" disabled={!canTake} title={canTake ? undefined : "Tugaskan percakapan ke CS yang sedang Anda perankan terlebih dahulu."} onClick={() => setConfirm("take")}>Ambil Alih Percakapan</Button>}
                   {isAssignedToMe && <Button size="sm" variant="outline" onClick={() => setConfirm("end")}>Akhiri Bantuan CS</Button>}
                   {selected.status !== "CLOSED" && <Button size="sm" variant="outline" className="text-destructive" onClick={() => setConfirm("close")}>Tutup Percakapan</Button>}
+                  {selected.status === "CLOSED" && <Button size="sm" variant="outline" onClick={() => { if (assistantActions.reopen(selected.id, `CS ${actingName}`)) setNotice("Percakapan dibuka kembali (simulasi)."); }}>Buka Kembali</Button>}
                 </div>
               </header>
               {selected.status !== "CLOSED" && (
@@ -229,6 +230,16 @@ function SupportInbox() {
               <Ctx k="CS ditugaskan" v={assignedName ?? "Belum ditugaskan"} />
               <Ctx k="Prioritas antrean" v={selected.priority ?? "Normal"} />
             </dl>
+            <h3 className="mb-2 mt-5 text-sm font-semibold">Aktivitas <span className="font-normal text-muted-foreground">· Simulasi</span></h3>
+            <ol className="space-y-2 border-l pl-3">
+              {conversationEvents(selected).map((e) => (
+                <li key={e.id} className="relative">
+                  <span className="absolute -left-[15px] top-1 size-1.5 rounded-full bg-primary" />
+                  <p className="font-medium">{lifecycleLabels[e.type]}</p>
+                  <p className="text-[11px] text-muted-foreground">{e.by} · {formatTime(e.at)}</p>
+                </li>
+              ))}
+            </ol>
             <p className="mt-4 text-[11px] text-muted-foreground">Prioritas hanya untuk pengaturan antrean, bukan klasifikasi risiko regulasi.</p>
           </aside>
         )}

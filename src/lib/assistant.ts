@@ -43,6 +43,8 @@ export interface Conversation {
   messages: ChatMsg[];
   createdAt: string;
   updatedAt: string;
+  /** Simulated lifecycle events (demo activity timeline). */
+  events?: LifecycleEvent[];
 }
 
 export const demoCs = [
@@ -183,6 +185,21 @@ const msg = (conversationId: string, sender: Sender, content: string, timestamp:
   id: uid(), conversationId, ...sender, content, timestamp, ...(refs ? { refs } : {}),
 });
 export const csJoinedNotice = (name: string) => `CS ${name} telah bergabung dan akan membantu Anda. Balasan otomatis AI Bot dihentikan selama sesi ini.`;
+export type LifecycleEventType = "created" | "assigned" | "takeover" | "cs_reply" | "handback" | "closed" | "reopened";
+export interface LifecycleEvent { id: string; type: LifecycleEventType; at: string; by: string }
+export const lifecycleLabels: Record<LifecycleEventType, string> = {
+  created: "Percakapan dibuat", assigned: "CS ditugaskan", takeover: "Diambil alih CS", cs_reply: "Balasan CS", handback: "Kembali ke AI Bot", closed: "Percakapan ditutup", reopened: "Percakapan dibuka kembali",
+};
+export const reopenNotice = "Percakapan dibuka kembali dan kembali ditangani GRAZU - AI Bot.";
+/** Timeline including a derived "created" event for seeded conversations. */
+export function conversationEvents(c: Conversation): LifecycleEvent[] {
+  const ev = c.events ?? [];
+  return ev.some((e) => e.type === "created") ? ev : [{ id: `ev-created-${c.id}`, type: "created", at: c.createdAt, by: c.participantId }, ...ev];
+}
+let evSeq = 0;
+const logEvent = (cid: string, type: LifecycleEventType, by: string) => set((s) => ({
+  conversations: s.conversations.map((x) => (x.id === cid ? { ...x, events: [...(x.events ?? []), { id: `ev-${++evSeq}`, type, at: new Date().toISOString(), by }] } : x)),
+}));
 export const closedNotice = "Percakapan ini telah ditutup. Pesan baru tidak dapat dikirim.";
 
 const conv = (id: string, title: string, daysAgo: number, time: string, rows: [Sender, string, string[]?][], extra: Partial<Conversation> = {}): Conversation => {
@@ -292,7 +309,7 @@ export const assistantActions = {
       const gid = `Guest-${String(n).padStart(3, "0")}`;
       cid = `g-${n}-${Date.now()}`;
       const first = msg(cid, { senderType: "guest", senderId: gid, senderName: gid }, t, ts);
-      c = { id: cid, title: conversationTitle(t), participantId: gid, participantType: "guest", productId: null, status: "AI_ACTIVE", messages: [first], createdAt: ts, updatedAt: ts };
+      c = { id: cid, title: conversationTitle(t), participantId: gid, participantType: "guest", productId: null, status: "AI_ACTIVE", messages: [first], createdAt: ts, updatedAt: ts, events: [{ id: `ev-${++evSeq}`, type: "created", at: ts, by: gid }] };
       const created = c;
       set((s) => ({ guestId: created.id, guestCount: n, conversations: [created, ...s.conversations],
         notifications: [{ id: `n-${created.id}`, conversationId: created.id, createdAt: ts, read: false, type: "new", text: `${gid} memulai percakapan sebagai tamu.` }, ...s.notifications] }));
@@ -338,10 +355,11 @@ export const assistantActions = {
       conversations: s.conversations.map((x) => (x.id === cid ? { ...x, assignedCsId: csId } : x)),
       notifications: [note(cid, "assigned", `Percakapan “${c.title}” ditugaskan kepada Anda.`, csId), ...s.notifications],
     }));
+    logEvent(cid, "assigned", demoCs.find((p) => p.id === csId)!.name);
     return true;
   },
   setPriority: (cid: string, priority: ConversationPriority) => set((s) => ({ conversations: s.conversations.map((x) => (x.id === cid ? { ...x, priority } : x)) })),
-  close(cid: string) {
+  close(cid: string, by = "Admin") {
     const c = state.conversations.find((x) => x.id === cid);
     if (!c || c.status === "CLOSED") return;
     const ts = new Date().toISOString();
@@ -351,6 +369,20 @@ export const assistantActions = {
       conversations: s.conversations.map((x) => (x.id === cid ? { ...x, status: "CLOSED", updatedAt: ts, messages: [...x.messages, msg(cid, systemSender, closedNotice, ts)] } : x)),
       notifications: [note(cid, "closed", `Percakapan “${c.title}” ditutup.`), ...s.notifications],
     }));
+    logEvent(cid, "closed", by);
+  },
+  /** Reopens a closed session to AI_ACTIVE; keeps history, adds one system notice, never triggers an AI reply. */
+  reopen(cid: string, by = "Admin") {
+    const c = state.conversations.find((x) => x.id === cid);
+    if (!c || c.status !== "CLOSED") return false;
+    const ts = new Date().toISOString();
+    set((s) => ({
+      pending: s.pending === cid ? null : s.pending,
+      generation: { ...s.generation, [cid]: (s.generation[cid] ?? 0) + 1 },
+      conversations: s.conversations.map((x) => (x.id === cid ? { ...x, status: "AI_ACTIVE", updatedAt: ts, messages: [...x.messages, msg(cid, systemSender, reopenNotice, ts)] } : x)),
+    }));
+    logEvent(cid, "reopened", by);
+    return true;
   },
   takeOver(cid: string, csIdArg?: string) {
     const c = state.conversations.find((x) => x.id === cid);
@@ -364,6 +396,7 @@ export const assistantActions = {
       conversations: s.conversations.map((x) => (x.id === cid ? { ...x, status: "HUMAN_ACTIVE", assignedCsId: csId, updatedAt: ts, messages: [...x.messages, msg(cid, systemSender, takeoverNotice(cs.senderName), ts)] } : x)),
       notifications: [note(cid, "handoff", `CS ${cs.senderName} mengambil alih “${c.title}”.`), ...s.notifications],
     }));
+    logEvent(cid, "takeover", cs.senderName);
   },
   endCs(cid: string, csId: string = currentDemoCs.id) {
     const c = state.conversations.find((x) => x.id === cid);
@@ -374,6 +407,7 @@ export const assistantActions = {
       conversations: s.conversations.map((x) => (x.id === cid ? { ...x, status: "AI_ACTIVE", updatedAt: ts, messages: [...x.messages, msg(cid, systemSender, returnToAiNotice, ts)] } : x)),
       notifications: [note(cid, "handback", `“${c.title}” kembali ditangani AI Bot.`), ...s.notifications],
     }));
+    logEvent(cid, "handback", csSender(csId).senderName);
   },
   csSend(cid: string, text: string, csId: string = currentDemoCs.id) {
     const t = text.trim();
@@ -381,6 +415,7 @@ export const assistantActions = {
     // Only the assigned CS may reply, and only while HUMAN_ACTIVE.
     if (!t || !c || c.status !== "HUMAN_ACTIVE" || c.assignedCsId !== csId) return;
     set(append(cid, msg(cid, csSender(csId), t, new Date().toISOString())));
+    logEvent(cid, "cs_reply", csSender(csId).senderName);
   },
   send(text: string, ctx: AssistantContext) {
     const t = text.trim();
@@ -394,6 +429,7 @@ export const assistantActions = {
       const created: Conversation = {
         id: cid, title: conversationTitle(t), participantId: demoParticipant.id, participantType: "client",
         productId: state.productId, status: "AI_ACTIVE", messages: [user], createdAt: ts, updatedAt: ts,
+        events: [{ id: `ev-${++evSeq}`, type: "created", at: ts, by: demoParticipant.name }],
       };
       set((s) => ({
         conversations: [created, ...s.conversations], activeId: cid,
