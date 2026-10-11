@@ -1,0 +1,55 @@
+import { useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Choice, DemoNotice, EvidenceLink, EvidenceTable, StatusBadge, tableHead, th, td } from "@/components/grazu/compliance-ui";
+import { assessmentStatus, categories, controls, controlStatuses, regulations, summarize, useCompliance, useComplianceEvidence, type Assessment, type ControlResult, type ControlStatus } from "@/lib/compliance";
+import { useUseCases, type UseCase } from "@/lib/use-cases";
+import { pageHead } from "@/lib/grazu-navigation";
+
+export const Route = createFileRoute("/app/compliance/assessments/$id")({
+  head: ({ params }) => pageHead(`Penilaian Kepatuhan ${params.id}`, "Checklist kontrol, bukti simulasi, dan riwayat review kepatuhan AI."),
+  component: AssessmentDetail,
+});
+function AssessmentDetail() {
+  const { id } = Route.useParams();
+  const { assessments } = useCompliance();
+  const a = assessments.find((a) => a.id === id);
+  const p = useUseCases().find((p) => p.id === a?.productId);
+  if (!a || !p) return <div className="py-16 text-center"><h1 className="text-xl font-semibold">Penilaian tidak ditemukan</h1><p className="mt-2 text-sm text-muted-foreground">ID penilaian atau produk tidak tersedia dalam data simulasi.</p><Button asChild className="mt-5" variant="outline"><Link to="/app/compliance">Kembali ke Kepatuhan Regulasi</Link></Button></div>;
+  return <AssessmentView assessment={a} product={p} />;
+}
+function AssessmentView({ assessment: a, product: p }: { assessment: Assessment; product: UseCase }) {
+  const { history, updateControl } = useCompliance();
+  const evidence = useComplianceEvidence(p.id);
+  const [selected, setSelected] = useState<string>();
+  const [statusFilter, setStatusFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const counts = summarize(a.results);
+  const control = controls.find((c) => c.id === selected);
+  const result = a.results.find((r) => r.controlId === selected);
+  const visible = controls.filter((c) => (!categoryFilter || c.category === categoryFilter) && (!statusFilter || a.results.find((r) => r.controlId === c.id)?.status === statusFilter));
+  const progress = Math.round((counts.Terpenuhi + counts["Tidak Berlaku"]) / a.results.length * 100);
+  return <>
+    <Link to="/app/compliance" className="text-xs text-primary hover:underline">← Kepatuhan Regulasi</Link>
+    <header className="mt-4"><p className="text-xs text-muted-foreground">{a.id} · Penilaian Simulasi</p><h1 className="mt-2 text-2xl font-semibold">{p.name}</h1><p className="mt-2 text-sm text-muted-foreground">{p.org}</p><div className="mt-3 flex flex-wrap items-center gap-3 text-xs"><StatusBadge status={assessmentStatus(a)} /><span>Diperbarui: {a.updated}</span><Link to="/app/use-cases/$id" params={{ id: p.id }} className="text-primary hover:underline">Buka Produk {p.id}</Link></div></header>
+    <DemoNotice />
+    <Tabs defaultValue="summary"><div className="overflow-x-auto"><TabsList className="w-max"><TabsTrigger value="summary">Ringkasan</TabsTrigger><TabsTrigger value="controls">Checklist Kontrol</TabsTrigger><TabsTrigger value="evidence">Bukti & Temuan</TabsTrigger><TabsTrigger value="history">Riwayat Review</TabsTrigger></TabsList></div>
+      <TabsContent value="summary" className="mt-6"><h2 className="text-base font-semibold">{a.results.length} Kontrol Tata Kelola</h2><dl className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">{controlStatuses.map((s) => <div key={s} className="border-l-2 pl-3"><dt className="text-xs text-muted-foreground">{s}</dt><dd className="mt-2 text-2xl font-semibold">{counts[s]}</dd></div>)}</dl><div className="mt-6 max-w-xl"><p className="mb-2 text-xs text-muted-foreground">{progress}% kontrol terpenuhi atau tidak berlaku · Simulasi</p><Progress value={progress} aria-label="Persentase kontrol terpenuhi atau tidak berlaku" /></div><section className="mt-8 border-t pt-5"><h2 className="mb-4 text-base font-semibold">Isu yang Memerlukan Tindak Lanjut</h2><ul className="divide-y">{a.results.filter((r) => !["Terpenuhi", "Tidak Berlaku"].includes(r.status)).map((r) => <li key={r.controlId} className="flex flex-wrap items-center justify-between gap-3 py-3 text-xs"><div><p className="font-medium">{r.controlId} · {controls.find((c) => c.id === r.controlId)?.name}</p><p className="mt-1 text-muted-foreground">{r.notes || "Bukti dan pemenuhan kontrol memerlukan validasi manusia."}</p></div><div className="flex items-center gap-2"><StatusBadge status={r.status} /><Button variant="outline" size="sm" onClick={() => setSelected(r.controlId)}>Tinjau</Button></div></li>)}</ul>{progress === 100 && <p className="py-5 text-sm text-muted-foreground">Tidak ada isu kontrol yang tertunda dalam simulasi ini.</p>}</section></TabsContent>
+      <TabsContent value="controls" className="mt-6"><div className="mb-4 flex flex-wrap gap-3"><Choice label="Filter status kontrol" value={statusFilter} onChange={setStatusFilter} options={controlStatuses} all="Semua status kontrol" /><Choice label="Filter kategori kontrol" value={categoryFilter} onChange={setCategoryFilter} options={categories} all="Semua kategori kontrol" /></div><div className="overflow-x-auto border-y"><table className="w-full min-w-[980px] text-xs"><thead className={tableHead}><tr>{["ID Kontrol", "Nama Kontrol", "Kategori", "Referensi Regulasi", "Status Penilaian", "Bukti", "Aksi"].map((h) => <th className={th} key={h}>{h}</th>)}</tr></thead><tbody>{visible.map((c) => { const r = a.results.find((r) => r.controlId === c.id); return <tr key={c.id} className="border-b last:border-0"><td className={td}>{c.id}</td><td className={`${td} font-medium`}>{c.name}</td><td className={td}>{c.category}</td><td className={`${td} max-w-52`}>{regulations.find((ref) => ref.id === c.regulationId)?.name}</td><td className={td}><StatusBadge status={r?.status ?? "Belum Diuji"} /></td><td className={td}>{evidence.filter((e) => e.source === c.source).length} referensi simulasi</td><td className={td}><Button size="sm" variant="outline" onClick={() => setSelected(c.id)}>Tinjau Kontrol</Button></td></tr>; })}{!visible.length && <tr><td colSpan={7} className="p-10 text-center text-muted-foreground">Tidak ada kontrol yang cocok dengan filter.</td></tr>}</tbody></table></div></TabsContent>
+      <TabsContent value="evidence" className="mt-6"><p className="mb-4 text-xs leading-5 text-muted-foreground">Referensi bukti simulasi dari modul terkait. Deklarasi dan referensi bukan bukti kepatuhan yang telah diverifikasi.</p><EvidenceTable evidence={evidence} />{!evidence.some((e) => e.source === "red") && <p className="mt-3 text-xs text-muted-foreground">Belum ada laporan pengujian keamanan AI terkait produk ini.</p>}{!evidence.some((e) => e.source === "dev") && <p className="mt-3 text-xs text-muted-foreground">Belum ada repositori DevSecOps terkait produk ini.</p>}</TabsContent>
+      <TabsContent value="history" className="mt-6"><p className="mb-4 text-xs text-muted-foreground">Seluruh aktivitas merupakan simulasi · Terbaru di atas</p><ol className="divide-y">{history.filter((h) => h.assessmentId === a.id).map((h) => <li key={h.id} className="py-4 text-xs"><div className="flex flex-wrap justify-between gap-2"><p className="font-medium">{h.action}</p><span className="text-muted-foreground">{h.date}</span></div><p className="mt-2 text-muted-foreground">{h.reviewer}</p><p className="mt-2 leading-5">{h.comment}</p><p className="mt-2 text-muted-foreground">{h.from} → {h.to}</p></li>)}</ol></TabsContent>
+    </Tabs>
+    <Sheet open={!!control} onOpenChange={(open) => !open && setSelected(undefined)}><SheetContent className="w-full overflow-y-auto sm:max-w-xl"><SheetHeader className="pr-5"><SheetTitle>{control?.name}</SheetTitle><SheetDescription>{control?.id} · Kontrol Simulasi</SheetDescription></SheetHeader>{control && result && <ControlEditor key={control.id} result={result} onSave={(status, notes) => updateControl(a.id, control.id, status, notes)} description={control.description} criteria={control.criteria} regulationId={control.regulationId} evidence={evidence.filter((e) => e.source === control.source)} />}</SheetContent></Sheet>
+  </>;
+}
+function ControlEditor({ result, onSave, description, criteria, regulationId, evidence }: { result: ControlResult; onSave: (status: ControlStatus, notes: string) => void; description: string; criteria: string; regulationId: string; evidence: ReturnType<typeof useComplianceEvidence> }) {
+  const [status, setStatus] = useState<ControlStatus>(result.status);
+  const [notes, setNotes] = useState(result.notes);
+  const [saved, setSaved] = useState(false);
+  const reference = regulations.find((r) => r.id === regulationId);
+  return <div className="mt-6 space-y-5 text-xs"><dl className="space-y-5"><div><dt className="font-semibold">Deskripsi Kontrol</dt><dd className="mt-2 leading-5">{description}</dd></div><div><dt className="font-semibold">Kriteria Penilaian</dt><dd className="mt-2 leading-5">{criteria}</dd></div><div><dt className="font-semibold">Referensi Regulasi</dt><dd className="mt-2 leading-5">{reference?.name}<p className="mt-1 text-warning">{reference?.status}</p><p className="mt-2 text-muted-foreground">{reference?.description}</p></dd></div><div><dt className="font-semibold">Catatan Penilaian</dt><dd className="mt-2 leading-5">Status awal dan pemetaan kontrol bersifat ilustratif, bukan evaluasi hukum. Bukti belum divalidasi.</dd></div></dl><section><h3 className="font-semibold">Bukti Simulasi Terkait</h3><ul className="mt-2 divide-y">{evidence.map((e) => <li className="py-3" key={e.id}><EvidenceLink evidence={e} /><p className="mt-1 leading-5 text-muted-foreground">{e.description}</p><p className="mt-1">{e.date} · {e.status}</p></li>)}</ul>{!evidence.length && <p className="mt-2 text-muted-foreground">Belum ada bukti simulasi dari sumber ini.</p>}</section><div><label className="mb-2 block font-medium">Status Penilaian</label><Choice label="Status penilaian kontrol" value={status} onChange={(v) => { if (controlStatuses.some((s) => s === v)) { setStatus(v as ControlStatus); setSaved(false); } }} options={controlStatuses} /></div><div><label htmlFor="control-notes" className="mb-2 block font-medium">Catatan Reviewer</label><Textarea id="control-notes" value={notes} onChange={(e) => { setNotes(e.target.value); setSaved(false); }} placeholder="Catatan peninjauan simulasi…" /></div><Button onClick={() => { onSave(status, notes); setSaved(true); }}>Simpan Perubahan Simulasi</Button>{saved && <p role="status" className="text-primary">Status dan catatan disimpan sebagai simulasi lokal.</p>}</div>;
+}
